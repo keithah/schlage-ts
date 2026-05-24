@@ -1,0 +1,14 @@
+# Example future CLI configuration. Keep real copies as config.yaml or *.local.yaml.
+schlage:
+  usernameEnv: SCHLAGE_USERNAME
+  passwordEnv: SCHLAGE_PASSWORD
+  # S07 live verifier accepts either a direct local lockId value or this env indirection.
+  # Prefer lockIdEnv so shared config files do not include machine/account-specific identifiers.
+  lockIdEnv: SCHLAGE_LOCK_ID
+  # cacheDir may also be provided by SCHLAGE_CACHE_DIR or cacheDirEnv.
+  cacheDir: ./.schlage-cache
+
+diagnostics:
+  # Redacted live verification transcripts may be directed here with SCHLAGE_S07_DIAGNOSTICS_DIR
+  # or by changing this future diagnostics setting. Keep diagnostics under a gitignored path.
+  redactedOutputDir: ./.schlage-cache/diagnostics

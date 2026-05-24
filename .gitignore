@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+.schlage-cache/
+before/
+*.local.yaml
+config.yaml
+config.*.yaml
+!config.example.yaml
