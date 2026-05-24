@@ -284,6 +284,10 @@ export class SchlageClient {
   #liveTransports: LiveSchlageTransports | undefined;
   #cacheSnapshot: PublicSchlageTokenCacheSnapshot | undefined;
   #cacheLoaded = false;
+  readonly #pendingCommandStates = new Map<
+    SchlageLockId,
+    { readonly state: Exclude<SchlageLockState, 'unknown'>; readonly expiresAt: number }
+  >();
 
   constructor(options: SchlageClientOptions = {}) {
     this.#options = { ...options };
@@ -339,7 +343,9 @@ export class SchlageClient {
     const payload = await this.#callProtocol('getStatus', (transport) =>
       transport.getStatus(session, normalizedLockId),
     );
-    return normalizeLockStatusPayload(normalizedLockId, payload);
+    return this.#applyPendingCommandState(
+      normalizeLockStatusPayload(normalizedLockId, payload),
+    );
   }
 
   async lock(lockId: SchlageLockId): Promise<SchlageCommandResult> {
@@ -559,7 +565,36 @@ export class SchlageClient {
 
       return call(session, normalizedLockId);
     });
-    return normalizeCommandPayload(normalizedLockId, payload);
+    const result = normalizeCommandPayload(normalizedLockId, payload);
+    if (
+      result.accepted &&
+      (result.observedState === 'locked' || result.observedState === 'unlocked')
+    ) {
+      this.#pendingCommandStates.set(normalizedLockId, {
+        state: result.observedState,
+        expiresAt: Date.now() + 15_000,
+      });
+    }
+    return result;
+  }
+
+  #applyPendingCommandState(status: SchlageLockStatus): SchlageLockStatus {
+    const pending = this.#pendingCommandStates.get(status.id);
+    if (pending === undefined) {
+      return status;
+    }
+
+    if (Date.now() > pending.expiresAt) {
+      this.#pendingCommandStates.delete(status.id);
+      return status;
+    }
+
+    if (status.state === pending.state) {
+      this.#pendingCommandStates.delete(status.id);
+      return status;
+    }
+
+    return { ...status, state: pending.state };
   }
 
   async #setLockSetting(

@@ -371,7 +371,7 @@ npm pack --dry-run
 
 Live cloud behavior observed during verification:
 
-- Some locks accept `unlock` and return `observedState: "unlocked"` while immediate status reads continue to report `locked`.
+- Fresh GET status reads can lag an accepted lock/unlock command for a few seconds. A single `SchlageClient` instance reconciles immediate `getStatus()` calls with the last accepted command state while the cloud read catches up; separate CLI invocations still use fresh cloud reads.
 - Access-code schedule writes can be accepted while subsequent access-code list responses omit schedule fields.
 
 ## Status

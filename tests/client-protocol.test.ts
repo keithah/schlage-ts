@@ -240,6 +240,44 @@ describe('SchlageClient authenticated protocol operations', () => {
     );
   });
 
+  it('uses the last accepted command state while Schlage status reads are stale', async () => {
+    const auth = authTransport();
+    const protocol = protocolTransport();
+    vi.mocked(protocol.unlock).mockResolvedValueOnce({
+      accepted: true,
+      observedState: 'unlocked',
+    });
+    vi.mocked(protocol.getStatus)
+      .mockResolvedValueOnce({
+        state: 'LOCKED',
+        battery: 91,
+      })
+      .mockResolvedValueOnce({
+        state: 'UNLOCKED',
+        battery: 91,
+      });
+    const client = new SchlageClient({
+      ...credentials,
+      authTransport: auth,
+      protocolTransport: protocol,
+    });
+
+    await client.unlock('front-door');
+    const staleStatus = await client.getStatus('front-door');
+    const convergedStatus = await client.getStatus('front-door');
+
+    expect(staleStatus).toEqual({
+      id: 'front-door',
+      state: 'unlocked',
+      batteryLevel: 91,
+    });
+    expect(convergedStatus).toEqual({
+      id: 'front-door',
+      state: 'unlocked',
+      batteryLevel: 91,
+    });
+  });
+
   it('reads users, access codes, and lock logs through the authenticated protocol seam', async () => {
     const auth = authTransport();
     const protocol = protocolTransport();
