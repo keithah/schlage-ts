@@ -6,6 +6,7 @@ import {
   SCHLAGE_TOKEN_CACHE_FILENAME,
   SchlageClient,
   type SchlageClientAuthTransport,
+  type SchlageClientProtocolTransport,
 } from '../src/index.js';
 import {
   type SchlageTokenCacheSession,
@@ -51,6 +52,15 @@ function mockedTransport(): SchlageClientAuthTransport {
         refreshedAt: new Date('2025-02-01T00:00:00.000Z'),
       }),
     ),
+  };
+}
+
+function protocolTransport(): SchlageClientProtocolTransport {
+  return {
+    listLocks: vi.fn(async () => ({ locks: [] })),
+    getStatus: vi.fn(async () => ({ state: 'LOCKED', battery: 91 })),
+    lock: vi.fn(async () => ({ accepted: true, observedState: 'LOCKED' })),
+    unlock: vi.fn(async () => ({ accepted: true, observedState: 'UNLOCKED' })),
   };
 }
 
@@ -261,5 +271,32 @@ describe('SchlageClient token cache integration', () => {
 
     expect(authTransport.signIn).toHaveBeenCalledExactlyOnceWith(credentials);
     expect(client.options).toMatchObject({ ...credentials, cacheDir });
+  });
+
+  it('reconciles stale status across cache-backed client instances after accepted commands', async () => {
+    const cacheDir = await tempCacheDir();
+    const writerProtocol = protocolTransport();
+    const readerProtocol = protocolTransport();
+    const writer = new SchlageClient({
+      ...credentials,
+      cacheDir,
+      authTransport: mockedTransport(),
+      protocolTransport: writerProtocol,
+    });
+    const reader = new SchlageClient({
+      ...credentials,
+      cacheDir,
+      authTransport: mockedTransport(),
+      protocolTransport: readerProtocol,
+    });
+
+    await writer.unlock('front-door');
+    const status = await reader.getStatus('front-door');
+
+    expect(status).toEqual({
+      id: 'front-door',
+      state: 'unlocked',
+      batteryLevel: 91,
+    });
   });
 });

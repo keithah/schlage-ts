@@ -51,6 +51,12 @@ import {
 } from './auth.js';
 import { SchlageError } from './errors.js';
 import {
+  clearSchlageCommandStateCache,
+  readSchlageCommandStateCache,
+  writeSchlageCommandStateCache,
+  type SchlageCachedCommandState,
+} from './command-state-cache.js';
+import {
   createLiveSchlageTransports,
   type LiveSchlageTransports,
 } from './live-transport.js';
@@ -286,7 +292,7 @@ export class SchlageClient {
   #cacheLoaded = false;
   readonly #pendingCommandStates = new Map<
     SchlageLockId,
-    { readonly state: Exclude<SchlageLockState, 'unknown'>; readonly expiresAt: number }
+    SchlageCachedCommandState
   >();
 
   constructor(options: SchlageClientOptions = {}) {
@@ -343,7 +349,7 @@ export class SchlageClient {
     const payload = await this.#callProtocol('getStatus', (transport) =>
       transport.getStatus(session, normalizedLockId),
     );
-    return this.#applyPendingCommandState(
+    return await this.#applyPendingCommandState(
       normalizeLockStatusPayload(normalizedLockId, payload),
     );
   }
@@ -570,27 +576,80 @@ export class SchlageClient {
       result.accepted &&
       (result.observedState === 'locked' || result.observedState === 'unlocked')
     ) {
-      this.#pendingCommandStates.set(normalizedLockId, {
+      await this.#rememberPendingCommandState(normalizedLockId, {
         state: result.observedState,
-        expiresAt: Date.now() + 15_000,
+        expiresAt: new Date(Date.now() + 15_000),
       });
     }
     return result;
   }
 
-  #applyPendingCommandState(status: SchlageLockStatus): SchlageLockStatus {
-    const pending = this.#pendingCommandStates.get(status.id);
+  async #rememberPendingCommandState(
+    lockId: SchlageLockId,
+    state: SchlageCachedCommandState,
+  ): Promise<void> {
+    this.#pendingCommandStates.set(lockId, state);
+    if (this.#options.cacheDir === undefined) {
+      return;
+    }
+
+    await writeSchlageCommandStateCache({
+      cacheDir: this.#options.cacheDir,
+      lockId,
+      state,
+    }).catch(() => undefined);
+  }
+
+  async #readPendingCommandState(
+    lockId: SchlageLockId,
+  ): Promise<SchlageCachedCommandState | undefined> {
+    const memoryState = this.#pendingCommandStates.get(lockId);
+    if (memoryState !== undefined) {
+      return memoryState;
+    }
+
+    if (this.#options.cacheDir === undefined) {
+      return undefined;
+    }
+
+    const cachedState = await readSchlageCommandStateCache({
+      cacheDir: this.#options.cacheDir,
+      lockId,
+    }).catch(() => undefined);
+    if (cachedState !== undefined) {
+      this.#pendingCommandStates.set(lockId, cachedState);
+    }
+
+    return cachedState;
+  }
+
+  async #clearPendingCommandState(lockId: SchlageLockId): Promise<void> {
+    this.#pendingCommandStates.delete(lockId);
+    if (this.#options.cacheDir === undefined) {
+      return;
+    }
+
+    await clearSchlageCommandStateCache({
+      cacheDir: this.#options.cacheDir,
+      lockId,
+    }).catch(() => undefined);
+  }
+
+  async #applyPendingCommandState(
+    status: SchlageLockStatus,
+  ): Promise<SchlageLockStatus> {
+    const pending = await this.#readPendingCommandState(status.id);
     if (pending === undefined) {
       return status;
     }
 
-    if (Date.now() > pending.expiresAt) {
-      this.#pendingCommandStates.delete(status.id);
+    if (Date.now() > pending.expiresAt.getTime()) {
+      await this.#clearPendingCommandState(status.id);
       return status;
     }
 
     if (status.state === pending.state) {
-      this.#pendingCommandStates.delete(status.id);
+      await this.#clearPendingCommandState(status.id);
       return status;
     }
 

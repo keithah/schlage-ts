@@ -371,7 +371,7 @@ npm pack --dry-run
 
 Live cloud behavior observed during verification:
 
-- Fresh GET status reads can lag an accepted lock/unlock command for a few seconds. A single `SchlageClient` instance reconciles immediate `getStatus()` calls with the last accepted command state while the cloud read catches up; separate CLI invocations still use fresh cloud reads.
+- Fresh GET status reads can lag an accepted lock/unlock command for a few seconds. `SchlageClient` reconciles immediate `getStatus()` calls with the last accepted command state while the cloud read catches up. When `cacheDir`/`SCHLAGE_CACHE_DIR` is configured, separate CLI invocations share that short-lived command state too.
 - Access-code schedule writes can be accepted while subsequent access-code list responses omit schedule fields.
 
 ## Status
