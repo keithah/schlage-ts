@@ -108,11 +108,9 @@ describe('Schlage protocol normalizers', () => {
         uuid: 'user-1',
         name: 'Operator Code',
       },
-      users: [
-        { id: 'user-1', name: 'Operator', email: 'operator@example.test' },
-      ],
     });
     expect(JSON.stringify(status)).not.toContain('raw-status-refresh-token');
+    expect(JSON.stringify(status)).not.toContain('operator@example.test');
   });
 
   it('normalizes users without exposing raw identity payload fields', () => {
@@ -319,10 +317,11 @@ describe('Schlage protocol normalizers', () => {
       resolveLastChangedBy({
         id: 'front-door',
         state: 'locked',
-        lockStateMetadata: { actionType: 'virtualKey', uuid: 'user-1' },
-        users: [
-          { id: 'user-1', name: 'Operator', email: 'operator@example.test' },
-        ],
+        lockStateMetadata: {
+          actionType: 'virtualKey',
+          uuid: 'user-1',
+          name: 'Operator',
+        },
       }),
     ).toBe('mobile device - Operator');
     expect(

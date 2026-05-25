@@ -50,7 +50,7 @@ print_help() {
 Usage: bash scripts/verify-s07-live.sh [--preflight] [--help]
 
 Runs the S07 live Schlage Encode Plus verification sequence with redacted diagnostics:
-  1. npm run verify:s06 guardrail
+  1. scripts/verify-s06.sh guardrail
   2. npm run build
   3. auth-check
   4. list-locks
@@ -76,7 +76,7 @@ Optional configuration:
 
 Test/development overrides:
   SCHLAGE_S07_CLI                CLI executable path. Defaults to dist/cli.js through node.
-  SCHLAGE_S07_SKIP_GUARDRAIL=1   Skip verify:s06. Intended only for verifier self-tests.
+  SCHLAGE_S07_SKIP_GUARDRAIL=1   Skip the local S06 guardrail. Intended only for verifier self-tests.
   SCHLAGE_S07_SKIP_BUILD=1       Skip npm run build. Intended only for verifier self-tests.
 
 The verifier prints key names, phases, exit codes, and diagnostics file names only. It must not print
@@ -183,6 +183,18 @@ function stateOf(envelope) {
   return envelope?.data?.status?.state ?? envelope?.data?.result?.observedState;
 }
 
+function statusFieldOf(envelope, field) {
+  return envelope?.data?.status?.[field];
+}
+
+function writeAcceptedOf(envelope) {
+  return envelope?.data?.write?.accepted;
+}
+
+function accessCodeByName(envelope, name) {
+  return envelope?.data?.accessCodes?.find((entry) => entry?.name === name);
+}
+
 if (mode === 'preflight') {
   const values = configValues();
   const missing = [];
@@ -216,6 +228,44 @@ if (mode === 'preflight') {
   const envelope = parseEnvelope(path);
   const actual = stateOf(envelope);
   if (actual !== expectedState) throw new Error(`${path} expected state ${expectedState}, got ${actual ?? '<missing>'}`);
+} else if (mode === 'status-field') {
+  const [path, field] = args;
+  const envelope = parseEnvelope(path);
+  const value = statusFieldOf(envelope, field);
+  if (value === undefined) throw new Error(`${path} omitted status field ${field}`);
+  process.stdout.write(String(value));
+} else if (mode === 'assert-status-field') {
+  const [path, field, expectedValue] = args;
+  const envelope = parseEnvelope(path);
+  const actual = statusFieldOf(envelope, field);
+  if (String(actual) !== expectedValue) throw new Error(`${path} expected status.${field}=${expectedValue}, got ${actual ?? '<missing>'}`);
+} else if (mode === 'assert-write-accepted') {
+  const [path] = args;
+  const envelope = parseEnvelope(path);
+  if (writeAcceptedOf(envelope) !== true) throw new Error(`${path} expected accepted write result`);
+} else if (mode === 'write-access-code-id') {
+  const [path] = args;
+  const envelope = parseEnvelope(path);
+  const id = envelope?.data?.write?.accessCodeId;
+  if (typeof id !== 'string' || id.trim().length === 0) throw new Error(`${path} omitted write accessCodeId`);
+  process.stdout.write(id);
+} else if (mode === 'access-code-id-by-name') {
+  const [path, name] = args;
+  const envelope = parseEnvelope(path);
+  const entry = accessCodeByName(envelope, name);
+  if (typeof entry?.id !== 'string' || entry.id.trim().length === 0) throw new Error(`${path} omitted access code named ${name}`);
+  process.stdout.write(entry.id);
+} else if (mode === 'assert-access-code') {
+  const [path, name, expectedCode, expectedDisabled] = args;
+  const envelope = parseEnvelope(path);
+  const entry = accessCodeByName(envelope, name);
+  if (!entry) throw new Error(`${path} expected access code named ${name}`);
+  if (entry.code !== expectedCode) throw new Error(`${path} expected access code ${name} to have requested code`);
+  if (String(entry.disabled) !== expectedDisabled) throw new Error(`${path} expected access code ${name} disabled=${expectedDisabled}, got ${entry.disabled}`);
+} else if (mode === 'assert-no-access-code') {
+  const [path, name] = args;
+  const envelope = parseEnvelope(path);
+  if (accessCodeByName(envelope, name)) throw new Error(`${path} still includes access code named ${name}`);
 } else if (mode === 'leak-scan') {
   const [path] = args;
   const text = readFileSync(path, 'utf8');
@@ -270,6 +320,36 @@ run_cli() {
     node dist/cli.js "$@"
   fi
 }
+
+cleanup_needed=0
+baseline_beeper=""
+baseline_lock_and_leave=""
+baseline_auto_lock_time=""
+temp_access_id=""
+
+cleanup_on_exit() {
+  local exit_code=$?
+  if [[ "$cleanup_needed" != "1" || "$exit_code" -eq 0 ]]; then
+    return
+  fi
+
+  set +e
+  if [[ -n "$temp_access_id" ]]; then
+    run_cli delete-access-code "$lock_id" "$temp_access_id" >/dev/null 2>&1
+  fi
+  if [[ -n "$baseline_beeper" ]]; then
+    run_cli set-beeper "$lock_id" "$(on_off_for_boolean "$baseline_beeper")" >/dev/null 2>&1
+  fi
+  if [[ -n "$baseline_lock_and_leave" ]]; then
+    run_cli set-lock-and-leave "$lock_id" "$(on_off_for_boolean "$baseline_lock_and_leave")" >/dev/null 2>&1
+  fi
+  if [[ -n "$baseline_auto_lock_time" ]]; then
+    run_cli set-auto-lock-time "$lock_id" "$baseline_auto_lock_time" >/dev/null 2>&1
+  fi
+  run_cli lock "$lock_id" >/dev/null 2>&1
+}
+
+trap cleanup_on_exit EXIT
 
 scan_phase_files() {
   local stdout_path="$1"
@@ -336,9 +416,82 @@ readback_until() {
   helper assert-state "$status_path" "$expected_state"
 }
 
+on_off_for_boolean() {
+  case "$1" in
+    true) printf 'on' ;;
+    false) printf 'off' ;;
+    *) usage_error "Expected boolean setting value, got $1" ;;
+  esac
+}
+
+opposite_on_off_for_boolean() {
+  case "$1" in
+    true) printf 'off' ;;
+    false) printf 'on' ;;
+    *) usage_error "Expected boolean setting value, got $1" ;;
+  esac
+}
+
+opposite_boolean_string() {
+  case "$1" in
+    true) printf 'false' ;;
+    false) printf 'true' ;;
+    *) usage_error "Expected boolean setting value, got $1" ;;
+  esac
+}
+
+alternate_auto_lock_time() {
+  if [[ "$1" == "60" ]]; then
+    printf '30'
+  else
+    printf '60'
+  fi
+}
+
+run_write_phase() {
+  local phase="$1"
+  local command_name="$2"
+  shift 2
+  local path
+  path="$(run_json_phase "$phase" "$command_name" "$@")"
+  helper assert-write-accepted "$path"
+  printf '%s' "$path"
+}
+
+verify_setting_field() {
+  local phase="$1"
+  local field="$2"
+  local expected_value="$3"
+  local path
+  path="$(run_json_phase "$phase" status "$lock_id")"
+  helper assert-status-field "$path" "$field" "$expected_value"
+}
+
+readback_setting_until() {
+  local phase_prefix="$1"
+  local field="$2"
+  local expected_value="$3"
+  local attempt=1
+  local status_path=""
+
+  while (( attempt <= status_attempts )); do
+    status_path="$(run_json_phase "${phase_prefix}-${attempt}" status "$lock_id")"
+    if helper assert-status-field "$status_path" "$field" "$expected_value" >/dev/null 2>&1; then
+      echo "S07 setting readback converged: phase=${phase_prefix}, field=${field}, value=${expected_value}, attempt=${attempt}"
+      return 0
+    fi
+    if (( attempt < status_attempts )); then
+      sleep "$status_delay"
+    fi
+    attempt=$((attempt + 1))
+  done
+
+  helper assert-status-field "$status_path" "$field" "$expected_value"
+}
+
 if [[ "${SCHLAGE_S07_SKIP_GUARDRAIL:-0}" != "1" ]]; then
   echo "S07: running S06 guardrail before live hardware operations."
-  npm run verify:s06
+  bash scripts/verify-s06.sh
 else
   echo "S07: skipping S06 guardrail because SCHLAGE_S07_SKIP_GUARDRAIL=1."
 fi
@@ -353,6 +506,7 @@ fi
 echo "S07: diagnostics directory is $diag_dir"
 echo "S07: executing live verifier sequence. Physical lock state will change."
 
+cleanup_needed=1
 run_json_phase "01-auth-check" auth-check >/dev/null
 run_json_phase "02-list-locks" list-locks >/dev/null
 run_json_phase "03-status-before" status "$lock_id" >/dev/null
@@ -368,11 +522,71 @@ fi
 if readback_until "07-status-after-unlock" unlocked; then
   :
 fi
-final_lock_path="$(run_json_phase "08-final-lock" lock "$lock_id")"
+
+settings_baseline_path="$(run_json_phase "08-settings-baseline" status "$lock_id")"
+baseline_beeper="$(helper status-field "$settings_baseline_path" beeperEnabled)"
+baseline_lock_and_leave="$(helper status-field "$settings_baseline_path" lockAndLeaveEnabled)"
+baseline_auto_lock_time="$(helper status-field "$settings_baseline_path" autoLockTime)"
+
+target_beeper="$(opposite_on_off_for_boolean "$baseline_beeper")"
+target_beeper_value="$(opposite_boolean_string "$baseline_beeper")"
+run_write_phase "09-set-beeper" set-beeper "$lock_id" "$target_beeper" >/dev/null
+readback_setting_until "10-status-after-set-beeper" beeperEnabled "$target_beeper_value"
+verify_setting_field "11-status-after-set-beeper-confirm" beeperEnabled "$target_beeper_value"
+run_write_phase "12-restore-beeper" set-beeper "$lock_id" "$(on_off_for_boolean "$baseline_beeper")" >/dev/null
+readback_setting_until "13-status-after-restore-beeper" beeperEnabled "$baseline_beeper"
+
+target_lock_and_leave="$(opposite_on_off_for_boolean "$baseline_lock_and_leave")"
+target_lock_and_leave_value="$(opposite_boolean_string "$baseline_lock_and_leave")"
+run_write_phase "14-set-lock-and-leave" set-lock-and-leave "$lock_id" "$target_lock_and_leave" >/dev/null
+readback_setting_until "15-status-after-set-lock-and-leave" lockAndLeaveEnabled "$target_lock_and_leave_value"
+run_write_phase "16-restore-lock-and-leave" set-lock-and-leave "$lock_id" "$(on_off_for_boolean "$baseline_lock_and_leave")" >/dev/null
+readback_setting_until "17-status-after-restore-lock-and-leave" lockAndLeaveEnabled "$baseline_lock_and_leave"
+
+target_auto_lock_time="$(alternate_auto_lock_time "$baseline_auto_lock_time")"
+run_write_phase "18-set-auto-lock-time" set-auto-lock-time "$lock_id" "$target_auto_lock_time" >/dev/null
+readback_setting_until "19-status-after-set-auto-lock-time" autoLockTime "$target_auto_lock_time"
+verify_setting_field "20-status-after-set-auto-lock-time-confirm" autoLockTime "$target_auto_lock_time"
+run_write_phase "21-restore-auto-lock-time" set-auto-lock-time "$lock_id" "$baseline_auto_lock_time" >/dev/null
+readback_setting_until "22-status-after-restore-auto-lock-time" autoLockTime "$baseline_auto_lock_time"
+
+temp_suffix="$(date +%s)-$$"
+temp_access_name="schlage-ts-live-$temp_suffix"
+updated_access_name="schlage-ts-live-updated-$temp_suffix"
+temp_access_code="$(printf '9%03d' "$(( ($$ + $(date +%S)) % 1000 ))")"
+updated_access_code="$(printf '8%03d' "$(( ($$ + $(date +%M)) % 1000 ))")"
+if [[ "$temp_access_code" == "$updated_access_code" ]]; then
+  updated_access_code="7001"
+fi
+
+access_before_path="$(run_json_phase "23-access-codes-before" access-codes "$lock_id")"
+helper assert-no-access-code "$access_before_path" "$temp_access_name"
+helper assert-no-access-code "$access_before_path" "$updated_access_name"
+run_json_phase "24-access-codes-before-confirm" access-codes "$lock_id" >/dev/null
+add_access_path="$(run_write_phase "25-add-access-code" add-access-code "$lock_id" --name "$temp_access_name" --code "$temp_access_code")"
+temp_access_id="$(helper write-access-code-id "$add_access_path")"
+access_after_add_path="$(run_json_phase "26-access-codes-after-add" access-codes "$lock_id")"
+helper assert-access-code "$access_after_add_path" "$temp_access_name" "$temp_access_code" false
+access_id_from_list="$(helper access-code-id-by-name "$access_after_add_path" "$temp_access_name")"
+if [[ "$access_id_from_list" != "$temp_access_id" ]]; then
+  temp_access_id="$access_id_from_list"
+fi
+run_json_phase "27-access-codes-after-add-confirm" access-codes "$lock_id" >/dev/null
+run_write_phase "28-update-access-code" update-access-code "$lock_id" "$temp_access_id" --name "$updated_access_name" --code "$updated_access_code" --disabled >/dev/null
+access_after_update_path="$(run_json_phase "29-access-codes-after-update" access-codes "$lock_id")"
+helper assert-access-code "$access_after_update_path" "$updated_access_name" "$updated_access_code" true
+run_json_phase "30-access-codes-after-update-confirm" access-codes "$lock_id" >/dev/null
+run_write_phase "31-delete-access-code" delete-access-code "$lock_id" "$temp_access_id" >/dev/null
+access_after_delete_path="$(run_json_phase "32-access-codes-after-delete" access-codes "$lock_id")"
+helper assert-no-access-code "$access_after_delete_path" "$temp_access_name"
+helper assert-no-access-code "$access_after_delete_path" "$updated_access_name"
+run_json_phase "33-access-codes-after-delete-confirm" access-codes "$lock_id" >/dev/null
+
+final_lock_path="$(run_json_phase "34-final-lock" lock "$lock_id")"
 if helper assert-state "$final_lock_path" locked >/dev/null 2>&1; then
   echo "S07: final lock command reported observedState=locked."
 fi
-readback_until "09-status-after-final-lock" locked
+readback_until "35-status-after-final-lock" locked
 
 if grep -R . "$diag_dir" >/dev/null; then
   while IFS= read -r -d '' file; do

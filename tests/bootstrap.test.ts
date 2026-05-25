@@ -36,7 +36,7 @@ describe('package bootstrap', () => {
 
     expect(packageJson.name).toBe('schlage-ts');
     expect(packageJson.type).toBe('module');
-    expect(packageJson.bin['schlage-ts']).toBe('./dist/cli.js');
+    expect(packageJson.bin['schlage-ts']).toBe('dist/cli.js');
     expect(packageJson.exports['.']).toBeDefined();
     expect(packageJson.scripts).toMatchObject({
       build: 'tsc',

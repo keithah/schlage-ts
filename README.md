@@ -367,7 +367,7 @@ npm pack --dry-run
 
 `verify:local` is a no-hardware guardrail. It exercises tests, type declarations, CLI smoke checks, failure redaction, and local cache behavior without requiring live credentials, network access, or physical locks.
 
-`verify:live:preflight` checks live configuration without making Schlage API calls or changing a lock. `verify:live` runs the full live sequence against a configured lock: authenticate, list locks, read status, lock, poll for locked, unlock, attempt unlocked readback, final lock, and poll for locked.
+`verify:live:preflight` checks live configuration without making Schlage API calls or changing a lock. `verify:live` runs the full live sequence against a configured lock: authenticate, list locks, read status, lock/unlock with bounded readbacks, toggle and restore supported settings, add/update/delete a temporary access code, final lock, and poll for locked.
 
 Live cloud behavior observed during verification:
 
@@ -377,5 +377,3 @@ Live cloud behavior observed during verification:
 ## Status
 
 This package is early and unofficial. The current public surface covers live auth, lock discovery, status reads, lock/unlock, users, access-code reads and writes, logs, diagnostics, keypad-disabled and last-changed-by helpers, supported lock settings, local cache, typed errors, and CLI automation.
-
-Future work includes broader live hardware verification for access-code and settings writes.

@@ -192,11 +192,9 @@ describe('SchlageClient authenticated protocol operations', () => {
       batteryLevel: 91,
       updatedAt: new Date('2025-01-02T03:04:05.000Z'),
       lockStateMetadata: { actionType: 'virtualKey', uuid: 'user-1' },
-      users: [
-        { id: 'user-1', name: 'Operator', email: 'operator@example.test' },
-      ],
     });
     expect(JSON.stringify(status)).not.toContain('raw-status-refresh-token');
+    expect(JSON.stringify(status)).not.toContain('operator@example.test');
   });
 
   it('locks then unlocks the same mocked lock through the authenticated protocol seam', async () => {
@@ -398,7 +396,7 @@ describe('SchlageClient authenticated protocol operations', () => {
       users: ['<REDACTED>'],
     });
     expect(keypadDisabled).toBe(true);
-    expect(lastChangedBy).toBe('mobile device - Operator');
+    expect(lastChangedBy).toBe('mobile device');
     expect(JSON.stringify(diagnostics)).not.toContain('raw-diagnostic-token');
   });
 

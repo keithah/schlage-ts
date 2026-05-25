@@ -185,7 +185,6 @@ export function normalizeLockStatusPayload(
     ...readOptionalString(payload, 'firmwareVersion', 'firmwareVersion'),
     ...readOptionalString(payload, 'macAddress', 'macAddress'),
     ...readOptionalLockStateMetadata(payload),
-    ...readOptionalStatusUsers(payload),
   };
 }
 
@@ -273,9 +272,10 @@ export function resolveLastChangedBy(
   }
 
   const userName =
-    metadata.uuid === undefined
+    metadata.name ??
+    (metadata.uuid === undefined
       ? undefined
-      : status.users?.find((user) => user.id === metadata.uuid)?.name;
+      : status.users?.find((user) => user.id === metadata.uuid)?.name);
   const userSuffix = userName === undefined ? '' : ` - ${userName}`;
 
   switch (metadata.actionType) {
@@ -534,16 +534,6 @@ function readOptionalLockStateMetadata(
     ...readOptionalString(value, 'name', 'name'),
   };
   return { lockStateMetadata: metadata };
-}
-
-function readOptionalStatusUsers(
-  record: Record<string, unknown>,
-): Pick<SchlageLockStatus, 'users'> {
-  if (!Array.isArray(record.users)) {
-    return {};
-  }
-
-  return { users: normalizeUserListPayload({ users: record.users }) };
 }
 
 function readAccessCodeValue(record: unknown): string {

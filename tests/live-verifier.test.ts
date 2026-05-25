@@ -56,8 +56,14 @@ const [command, lockId] = process.argv.slice(2);
 const scenario = process.env.FAKE_S07_SCENARIO ?? 'success';
 if (process.env.FAKE_S07_CALL_LOG) appendFileSync(process.env.FAKE_S07_CALL_LOG, command + '\\n');
 const statePath = process.env.FAKE_S07_STATE_FILE;
+const settingsPath = process.env.FAKE_S07_SETTINGS_FILE;
+const codesPath = process.env.FAKE_S07_CODES_FILE;
 function readState() { if (!statePath) return 'unlocked'; try { return readFileSync(statePath, 'utf8').trim() || 'unlocked'; } catch { return 'unlocked'; } }
 function writeState(state) { if (statePath) writeFileSync(statePath, state); }
+function readSettings() { if (!settingsPath) return { beeperEnabled: true, lockAndLeaveEnabled: false, autoLockTime: 30 }; try { return JSON.parse(readFileSync(settingsPath, 'utf8')); } catch { return { beeperEnabled: true, lockAndLeaveEnabled: false, autoLockTime: 30 }; } }
+function writeSettings(settings) { if (settingsPath) writeFileSync(settingsPath, JSON.stringify(settings)); }
+function readCodes() { if (!codesPath) return []; try { return JSON.parse(readFileSync(codesPath, 'utf8')); } catch { return []; } }
+function writeCodes(codes) { if (codesPath) writeFileSync(codesPath, JSON.stringify(codes)); }
 function delayedStatusState() {
   const state = readState();
   const delay = Number(process.env.FAKE_S07_UNLOCK_STATUS_DELAY_COUNT ?? '0');
@@ -76,9 +82,16 @@ if (scenario === 'nonzero' && command === 'list-locks') { emit({ ok: false, comm
 if (scenario === 'leak' && command === 'auth-check') { process.stdout.write(process.env.SCHLAGE_PASSWORD ?? 'missing'); process.exit(0); }
 if (command === 'auth-check') emit({ ok: true, command, ...base });
 else if (command === 'list-locks') emit({ ok: true, command, ...base, data: { locks: [{ id: lockId ?? process.env.SCHLAGE_LOCK_ID, name: 'Front Door' }] } });
-else if (command === 'status') emit({ ok: true, command, ...base, data: { status: { id: lockId, state: delayedStatusState(), batteryLevel: 91 } } });
+else if (command === 'status') emit({ ok: true, command, ...base, data: { status: { id: lockId, state: delayedStatusState(), batteryLevel: 91, ...readSettings() } } });
 else if (command === 'lock') { writeState('locked'); emit({ ok: true, command, ...base, data: { result: { id: lockId, accepted: true, observedState: 'locked' } } }); }
 else if (command === 'unlock') { writeState('unlocked'); if (process.env.FAKE_S07_UNLOCK_STATUS_COUNTER_FILE) writeFileSync(process.env.FAKE_S07_UNLOCK_STATUS_COUNTER_FILE, '0'); emit({ ok: true, command, ...base, data: { result: { id: lockId, accepted: true, observedState: 'unlocked' } } }); }
+else if (command === 'access-codes') emit({ ok: true, command, ...base, data: { accessCodes: readCodes() } });
+else if (command === 'add-access-code') { const name = process.argv[process.argv.indexOf('--name') + 1]; const code = process.argv[process.argv.indexOf('--code') + 1]; const id = 'fake-code-' + (readCodes().length + 1); writeCodes([...readCodes(), { id, lockId, name, code, disabled: false }]); emit({ ok: true, command, ...base, data: { write: { lockId, accepted: true, accessCodeId: id } } }); }
+else if (command === 'update-access-code') { const accessCodeId = process.argv[4]; const name = process.argv[process.argv.indexOf('--name') + 1]; const code = process.argv[process.argv.indexOf('--code') + 1]; writeCodes(readCodes().map((entry) => entry.id === accessCodeId ? { ...entry, name, code, disabled: process.argv.includes('--disabled') } : entry)); emit({ ok: true, command, ...base, data: { write: { lockId, accepted: true, accessCodeId } } }); }
+else if (command === 'delete-access-code') { const accessCodeId = process.argv[4]; writeCodes(readCodes().filter((entry) => entry.id !== accessCodeId)); emit({ ok: true, command, ...base, data: { write: { lockId, accepted: true, accessCodeId } } }); }
+else if (command === 'set-beeper') { const settings = readSettings(); writeSettings({ ...settings, beeperEnabled: process.argv[4] === 'on' }); emit({ ok: true, command, ...base, data: { write: { lockId, accepted: true } } }); }
+else if (command === 'set-lock-and-leave') { const settings = readSettings(); writeSettings({ ...settings, lockAndLeaveEnabled: process.argv[4] === 'on' }); emit({ ok: true, command, ...base, data: { write: { lockId, accepted: true } } }); }
+else if (command === 'set-auto-lock-time') { const settings = readSettings(); writeSettings({ ...settings, autoLockTime: Number(process.argv[4]) }); emit({ ok: true, command, ...base, data: { write: { lockId, accepted: true } } }); }
 else { emit({ ok: false, command, error: { name: 'SchlageError', code: 'SCHLAGE_UNKNOWN_ERROR', message: 'unknown command', retryable: false } }, process.stderr); process.exit(2); }
 `,
     'utf8',
@@ -97,7 +110,7 @@ describe('S07 live verifier harness', () => {
   it('prints help without requiring live credentials or secret examples', () => {
     const result = runVerifier(['--help']);
 
-    expect(result.status).toBe(0);
+    expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain('verify-s07-live.sh');
     expect(result.stdout).toContain('SCHLAGE_USERNAME');
     expect(result.stdout).toContain('SCHLAGE_PASSWORD');
@@ -176,6 +189,8 @@ describe('S07 live verifier harness', () => {
       SCHLAGE_S07_STATUS_ATTEMPTS: '1',
       SCHLAGE_S07_STATUS_DELAY: '0',
       FAKE_S07_STATE_FILE: join(root, 'state.txt'),
+      FAKE_S07_SETTINGS_FILE: join(root, 'settings.json'),
+      FAKE_S07_CODES_FILE: join(root, 'codes.json'),
     });
 
     expect(result.status).toBe(0);
@@ -194,11 +209,17 @@ describe('S07 live verifier harness', () => {
     expect(summary).toContain('01-auth-check\tauth-check\t0');
     expect(summary).toContain('04-lock\tlock\t0');
     expect(summary).toContain('07-status-after-unlock-1\tstatus\t0');
-    expect(summary).toContain('08-final-lock\tlock\t0');
-    expect(summary).toContain('09-status-after-final-lock-1\tstatus\t0');
+    expect(summary).toContain('08-settings-baseline\tstatus\t0');
+    expect(summary).toContain('09-set-beeper\tset-beeper\t0');
+    expect(summary).toContain('12-restore-beeper\tset-beeper\t0');
+    expect(summary).toContain('25-add-access-code\tadd-access-code\t0');
+    expect(summary).toContain('28-update-access-code\tupdate-access-code\t0');
+    expect(summary).toContain('31-delete-access-code\tdelete-access-code\t0');
+    expect(summary).toContain('34-final-lock\tlock\t0');
+    expect(summary).toContain('35-status-after-final-lock-1\tstatus\t0');
     expect(summary).not.toContain('operator@example.test');
     expect(summary).not.toContain('live-secret');
-  }, 10_000);
+  }, 30_000);
 
   it('tolerates stale status reads after an accepted unlock command until bounded convergence', async () => {
     const root = await tempDir();
@@ -214,6 +235,8 @@ describe('S07 live verifier harness', () => {
       SCHLAGE_S07_STATUS_ATTEMPTS: '3',
       SCHLAGE_S07_STATUS_DELAY: '0',
       FAKE_S07_STATE_FILE: join(root, 'state.txt'),
+      FAKE_S07_SETTINGS_FILE: join(root, 'settings.json'),
+      FAKE_S07_CODES_FILE: join(root, 'codes.json'),
       FAKE_S07_UNLOCK_STATUS_COUNTER_FILE: join(
         root,
         'unlock-status-count.txt',
@@ -221,15 +244,15 @@ describe('S07 live verifier harness', () => {
       FAKE_S07_UNLOCK_STATUS_DELAY_COUNT: '2',
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain(
       'S07 readback converged: phase=07-status-after-unlock, state=unlocked, attempt=3',
     );
     expect(result.stdout).toContain(
-      'S07 readback converged: phase=09-status-after-final-lock, state=locked',
+      'S07 readback converged: phase=35-status-after-final-lock, state=locked',
     );
     expect(result.stdout).not.toContain('live-secret');
-  });
+  }, 30_000);
 
   it('fails on malformed CLI JSON capture', async () => {
     const root = await tempDir();
@@ -252,7 +275,7 @@ describe('S07 live verifier harness', () => {
     expect(result.stderr).not.toContain('live-secret');
   });
 
-  it('stops subsequent state-changing commands after a nonzero command exit', async () => {
+  it('stops the main sequence and attempts cleanup lock after a nonzero command exit', async () => {
     const root = await tempDir();
     const fakeCli = await writeFakeCli(root);
     const callLog = join(root, 'calls.log');
@@ -279,7 +302,11 @@ describe('S07 live verifier harness', () => {
       { encoding: 'utf8' },
     );
     expect(result.status).toBe(9);
-    expect(calls.trim().split('\n')).toEqual(['auth-check', 'list-locks']);
+    expect(calls.trim().split('\n')).toEqual([
+      'auth-check',
+      'list-locks',
+      'lock',
+    ]);
     expect(result.stderr).toContain('S07 phase failed');
     expect(result.stderr).not.toContain('live-secret');
   });
