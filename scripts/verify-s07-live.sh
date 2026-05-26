@@ -59,8 +59,11 @@ Runs the S07 live Schlage Encode Plus verification sequence with redacted diagno
   7. status readback until locked or bounded retry exhaustion
   8. unlock <configured-lock-id>
   9. status readback until unlocked or bounded retry exhaustion
- 10. lock <configured-lock-id> to leave the device locked
- 11. status readback until locked or bounded retry exhaustion
+ 10. supported settings toggle/restore verification
+ 11. access-code add/update/delete verification
+ 12. optional temporary schedule write probe when SCHLAGE_S07_VERIFY_SCHEDULES=1
+ 13. lock <configured-lock-id> to leave the device locked
+ 14. status readback until locked or bounded retry exhaustion
 
 Required live configuration, provided either by environment defaults or YAML indirection:
   SCHLAGE_USERNAME
@@ -73,6 +76,7 @@ Optional configuration:
   SCHLAGE_S07_DIAGNOSTICS_DIR    Redacted transcript output directory. Defaults to a temp directory.
   SCHLAGE_S07_STATUS_ATTEMPTS    Readback attempts after lock/unlock. Defaults to 12.
   SCHLAGE_S07_STATUS_DELAY       Seconds between readback attempts. Defaults to 5.
+  SCHLAGE_S07_VERIFY_SCHEDULES   Set to 1 for an opt-in temporary schedule write/delete probe.
 
 Test/development overrides:
   SCHLAGE_S07_CLI                CLI executable path. Defaults to dist/cli.js through node.
@@ -582,11 +586,30 @@ helper assert-no-access-code "$access_after_delete_path" "$temp_access_name"
 helper assert-no-access-code "$access_after_delete_path" "$updated_access_name"
 run_json_phase "33-access-codes-after-delete-confirm" access-codes "$lock_id" >/dev/null
 
-final_lock_path="$(run_json_phase "34-final-lock" lock "$lock_id")"
+final_lock_phase="34-final-lock"
+final_lock_status_phase="35-status-after-final-lock"
+if [[ "${SCHLAGE_S07_VERIFY_SCHEDULES:-0}" == "1" ]]; then
+  scheduled_access_name="schlage-ts-live-scheduled-$temp_suffix"
+  scheduled_access_code="$(printf '7%03d' "$(( ($$ + $(date +%H)) % 1000 ))")"
+  scheduled_starts_at="$(date -u -d '+10 minutes' '+%Y-%m-%dT%H:%M:%S.000Z')"
+  scheduled_ends_at="$(date -u -d '+40 minutes' '+%Y-%m-%dT%H:%M:%S.000Z')"
+  scheduled_add_path="$(run_write_phase "34-add-scheduled-access-code" add-access-code "$lock_id" --name "$scheduled_access_name" --code "$scheduled_access_code" --temporary-starts-at "$scheduled_starts_at" --temporary-ends-at "$scheduled_ends_at")"
+  temp_access_id="$(helper write-access-code-id "$scheduled_add_path")"
+  echo "S07 temporary schedule write accepted."
+  run_write_phase "35-delete-scheduled-access-code" delete-access-code "$lock_id" "$temp_access_id" >/dev/null
+  temp_access_id=""
+  scheduled_after_delete_path="$(run_json_phase "36-access-codes-after-scheduled-delete" access-codes "$lock_id")"
+  helper assert-no-access-code "$scheduled_after_delete_path" "$scheduled_access_name"
+  run_json_phase "37-access-codes-after-scheduled-delete-confirm" access-codes "$lock_id" >/dev/null
+  final_lock_phase="38-final-lock"
+  final_lock_status_phase="39-status-after-final-lock"
+fi
+
+final_lock_path="$(run_json_phase "$final_lock_phase" lock "$lock_id")"
 if helper assert-state "$final_lock_path" locked >/dev/null 2>&1; then
   echo "S07: final lock command reported observedState=locked."
 fi
-readback_until "35-status-after-final-lock" locked
+readback_until "$final_lock_status_phase" locked
 
 if grep -R . "$diag_dir" >/dev/null; then
   while IFS= read -r -d '' file; do

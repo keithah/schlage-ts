@@ -254,6 +254,47 @@ describe('S07 live verifier harness', () => {
     expect(result.stdout).not.toContain('live-secret');
   }, 30_000);
 
+  it('runs the opt-in temporary schedule probe when explicitly enabled', async () => {
+    const root = await tempDir();
+    const fakeCli = await writeFakeCli(root);
+    const diagDir = join(root, 'diag');
+
+    const result = runVerifier([], {
+      SCHLAGE_USERNAME: 'operator@example.test',
+      SCHLAGE_PASSWORD: 'password=live-secret',
+      SCHLAGE_LOCK_ID: 'front-door',
+      SCHLAGE_S07_CLI: fakeCli,
+      SCHLAGE_S07_DIAGNOSTICS_DIR: diagDir,
+      SCHLAGE_S07_SKIP_GUARDRAIL: '1',
+      SCHLAGE_S07_SKIP_BUILD: '1',
+      SCHLAGE_S07_STATUS_ATTEMPTS: '1',
+      SCHLAGE_S07_STATUS_DELAY: '0',
+      SCHLAGE_S07_VERIFY_SCHEDULES: '1',
+      FAKE_S07_STATE_FILE: join(root, 'state.txt'),
+      FAKE_S07_SETTINGS_FILE: join(root, 'settings.json'),
+      FAKE_S07_CODES_FILE: join(root, 'codes.json'),
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('S07 temporary schedule write accepted.');
+
+    const summary = execFileSync(
+      'node',
+      [
+        '-e',
+        `process.stdout.write(require('node:fs').readFileSync(${JSON.stringify(join(diagDir, 'summary.tsv'))}, 'utf8'))`,
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(summary).toContain(
+      '34-add-scheduled-access-code\tadd-access-code\t0',
+    );
+    expect(summary).toContain(
+      '35-delete-scheduled-access-code\tdelete-access-code\t0',
+    );
+    expect(summary).toContain('38-final-lock\tlock\t0');
+  }, 30_000);
+
   it('fails on malformed CLI JSON capture', async () => {
     const root = await tempDir();
     const fakeCli = await writeFakeCli(root);

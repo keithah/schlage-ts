@@ -1,6 +1,6 @@
 {
   "name": "schlage-ts",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Native TypeScript client and JSON-first CLI for Schlage Encode WiFi locks",
   "type": "module",
   "license": "Apache-2.0",
@@ -29,6 +29,7 @@
   "files": [
     "dist",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
     "config.example.yaml",
     ".env.example"

@@ -377,7 +377,7 @@ describe('CLI command envelope seam', () => {
     const stdout = { write: vi.fn(() => true) };
     const stderr = { write: vi.fn(() => true) };
     const program = createCli(
-      { name: 'schlage-ts', version: '0.1.0' },
+      { name: 'schlage-ts', version: '0.1.1' },
       { stdout, stderr },
     );
 
@@ -1088,6 +1088,10 @@ describe('CLI command envelope seam', () => {
         'Cleaner',
         '--code',
         '0042',
+        '--temporary-starts-at',
+        '2026-01-02T03:04:05.000Z',
+        '--temporary-ends-at',
+        '2026-01-03T03:04:05.000Z',
         '--username',
         'operator@example.test',
         '--password',
@@ -1195,6 +1199,11 @@ describe('CLI command envelope seam', () => {
       {
         name: 'Cleaner',
         code: '0042',
+        schedule: {
+          type: 'temporary',
+          startsAt: new Date('2026-01-02T03:04:05.000Z'),
+          endsAt: new Date('2026-01-03T03:04:05.000Z'),
+        },
       },
     );
     expect(client.updateAccessCode).toHaveBeenCalledExactlyOnceWith(

@@ -44,6 +44,8 @@ interface AccessCodeCliOptions {
   readonly code: string;
   readonly disabled?: true;
   readonly notify?: true;
+  readonly temporaryStartsAt?: string;
+  readonly temporaryEndsAt?: string;
 }
 
 export interface CliClient {
@@ -375,7 +377,15 @@ export function createCli(
       .requiredOption('--name <name>', 'Access code name')
       .requiredOption('--code <code>', 'Numeric access code')
       .option('--disabled', 'Create the access code disabled')
-      .option('--notify', 'Enable Schlage notification for access-code use'),
+      .option('--notify', 'Enable Schlage notification for access-code use')
+      .option(
+        '--temporary-starts-at <iso>',
+        'Temporary access-code start time as an ISO timestamp',
+      )
+      .option(
+        '--temporary-ends-at <iso>',
+        'Temporary access-code end time as an ISO timestamp',
+      ),
   ).action(async (lockId, options) => {
     const writeOptions = options as CliConfigFlags & AccessCodeCliOptions;
     await runCliCommand(
@@ -402,7 +412,15 @@ export function createCli(
       .requiredOption('--name <name>', 'Access code name')
       .requiredOption('--code <code>', 'Numeric access code')
       .option('--disabled', 'Disable the access code')
-      .option('--notify', 'Enable Schlage notification for access-code use'),
+      .option('--notify', 'Enable Schlage notification for access-code use')
+      .option(
+        '--temporary-starts-at <iso>',
+        'Temporary access-code start time as an ISO timestamp',
+      )
+      .option(
+        '--temporary-ends-at <iso>',
+        'Temporary access-code end time as an ISO timestamp',
+      ),
   ).action(async (lockId, accessCodeId, options) => {
     const writeOptions = options as CliConfigFlags & AccessCodeCliOptions;
     await runCliCommand(
@@ -639,12 +657,68 @@ function parseOnOff(value: string): boolean {
 function accessCodeInputFromOptions(
   options: AccessCodeCliOptions,
 ): SchlageAccessCodeInput {
+  const schedule = temporaryScheduleFromOptions(options);
   return {
     name: options.name,
     code: options.code,
     ...(options.disabled === true ? { disabled: true } : {}),
     ...(options.notify === true ? { notifyOnUse: true } : {}),
+    ...(schedule === undefined ? {} : { schedule }),
   };
+}
+
+function temporaryScheduleFromOptions(
+  options: AccessCodeCliOptions,
+): SchlageAccessCodeInput['schedule'] {
+  if (
+    options.temporaryStartsAt === undefined &&
+    options.temporaryEndsAt === undefined
+  ) {
+    return undefined;
+  }
+
+  if (
+    options.temporaryStartsAt === undefined ||
+    options.temporaryEndsAt === undefined
+  ) {
+    throw new SchlageError({
+      code: 'SCHLAGE_CONFIG_MALFORMED',
+      message:
+        '--temporary-starts-at and --temporary-ends-at must be provided together.',
+      retryable: false,
+    });
+  }
+
+  const startsAt = parseIsoDateOption(
+    options.temporaryStartsAt,
+    '--temporary-starts-at',
+  );
+  const endsAt = parseIsoDateOption(
+    options.temporaryEndsAt,
+    '--temporary-ends-at',
+  );
+  if (endsAt.getTime() <= startsAt.getTime()) {
+    throw new SchlageError({
+      code: 'SCHLAGE_CONFIG_MALFORMED',
+      message: '--temporary-ends-at must be after --temporary-starts-at.',
+      retryable: false,
+    });
+  }
+
+  return { type: 'temporary', startsAt, endsAt };
+}
+
+function parseIsoDateOption(value: string, optionName: string): Date {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new SchlageError({
+      code: 'SCHLAGE_CONFIG_MALFORMED',
+      message: `${optionName} must be a valid ISO timestamp.`,
+      retryable: false,
+    });
+  }
+
+  return date;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

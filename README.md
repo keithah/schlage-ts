@@ -91,8 +91,8 @@ schlage-ts logs <lock-id> [--limit <n>] [--desc]
 schlage-ts diagnostics <lock-id>
 schlage-ts keypad-disabled <lock-id>
 schlage-ts last-changed-by <lock-id>
-schlage-ts add-access-code <lock-id> --name <name> --code <code> [--disabled] [--notify]
-schlage-ts update-access-code <lock-id> <access-code-id> --name <name> --code <code> [--disabled] [--notify]
+schlage-ts add-access-code <lock-id> --name <name> --code <code> [--disabled] [--notify] [--temporary-starts-at <iso> --temporary-ends-at <iso>]
+schlage-ts update-access-code <lock-id> <access-code-id> --name <name> --code <code> [--disabled] [--notify] [--temporary-starts-at <iso> --temporary-ends-at <iso>]
 schlage-ts delete-access-code <lock-id> <access-code-id>
 schlage-ts set-beeper <lock-id> <on|off>
 schlage-ts set-lock-and-leave <lock-id> <on|off>
@@ -226,6 +226,15 @@ Access-code writes and lock settings:
 
 ```ts
 await client.addAccessCode('front-door', { name: 'Cleaner', code: '0042' });
+await client.addAccessCode('front-door', {
+  name: 'Temporary Cleaner',
+  code: '0044',
+  schedule: {
+    type: 'temporary',
+    startsAt: new Date('2026-01-02T03:04:05.000Z'),
+    endsAt: new Date('2026-01-03T03:04:05.000Z'),
+  },
+});
 await client.updateAccessCode('front-door', 'code-1', {
   name: 'Cleaner',
   code: '0043',
@@ -367,7 +376,7 @@ npm pack --dry-run
 
 `verify:local` is a no-hardware guardrail. It exercises tests, type declarations, CLI smoke checks, failure redaction, and local cache behavior without requiring live credentials, network access, or physical locks.
 
-`verify:live:preflight` checks live configuration without making Schlage API calls or changing a lock. `verify:live` runs the full live sequence against a configured lock: authenticate, list locks, read status, lock/unlock with bounded readbacks, toggle and restore supported settings, add/update/delete a temporary access code, final lock, and poll for locked.
+`verify:live:preflight` checks live configuration without making Schlage API calls or changing a lock. `verify:live` runs the full live sequence against a configured lock: authenticate, list locks, read status, lock/unlock with bounded readbacks, toggle and restore supported settings, add/update/delete a temporary access code, final lock, and poll for locked. Set `SCHLAGE_S07_VERIFY_SCHEDULES=1` to also run an opt-in temporary schedule write/delete probe.
 
 Live cloud behavior observed during verification:
 

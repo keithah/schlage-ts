@@ -207,7 +207,7 @@ describe('package bootstrap', () => {
   });
 
   it('prints CLI help and version without credentials', () => {
-    expect(runCli('--version').trim()).toBe('0.1.0');
+    expect(runCli('--version').trim()).toBe('0.1.1');
 
     const help = runCli('--help');
     expect(help).toContain('Usage: schlage-ts [options] [command]');
@@ -231,7 +231,7 @@ describe('package bootstrap', () => {
   it('exposes placeholder command names through the constructed program', () => {
     const commandNames = createCli({
       name: 'schlage-ts',
-      version: '0.1.0',
+      version: '0.1.1',
     }).commands.map((command) => command.name());
 
     expect(commandNames).toEqual([
