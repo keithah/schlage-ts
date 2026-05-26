@@ -145,7 +145,7 @@ describe('S07 live verifier harness', () => {
       LIVE_LOCK: 'front-door',
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain('S07 preflight passed');
     expect(result.stdout).not.toContain('operator@example.test');
     expect(result.stdout).not.toContain('live-secret');

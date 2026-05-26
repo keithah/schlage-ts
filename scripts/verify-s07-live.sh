@@ -557,8 +557,10 @@ readback_setting_until "22-status-after-restore-auto-lock-time" autoLockTime "$b
 temp_suffix="$(date +%s)-$$"
 temp_access_name="schlage-ts-live-$temp_suffix"
 updated_access_name="schlage-ts-live-updated-$temp_suffix"
-temp_access_code="$(printf '9%03d' "$(( ($$ + $(date +%S)) % 1000 ))")"
-updated_access_code="$(printf '8%03d' "$(( ($$ + $(date +%M)) % 1000 ))")"
+current_second="$(date +%S)"
+current_minute="$(date +%M)"
+temp_access_code="$(printf '9%03d' "$(( ($$ + 10#$current_second) % 1000 ))")"
+updated_access_code="$(printf '8%03d' "$(( ($$ + 10#$current_minute) % 1000 ))")"
 if [[ "$temp_access_code" == "$updated_access_code" ]]; then
   updated_access_code="7001"
 fi
@@ -590,7 +592,8 @@ final_lock_phase="34-final-lock"
 final_lock_status_phase="35-status-after-final-lock"
 if [[ "${SCHLAGE_S07_VERIFY_SCHEDULES:-0}" == "1" ]]; then
   scheduled_access_name="schlage-ts-live-scheduled-$temp_suffix"
-  scheduled_access_code="$(printf '7%03d' "$(( ($$ + $(date +%H)) % 1000 ))")"
+  current_hour="$(date +%H)"
+  scheduled_access_code="$(printf '7%03d' "$(( ($$ + 10#$current_hour) % 1000 ))")"
   scheduled_starts_at="$(date -u -d '+10 minutes' '+%Y-%m-%dT%H:%M:%S.000Z')"
   scheduled_ends_at="$(date -u -d '+40 minutes' '+%Y-%m-%dT%H:%M:%S.000Z')"
   scheduled_add_path="$(run_write_phase "34-add-scheduled-access-code" add-access-code "$lock_id" --name "$scheduled_access_name" --code "$scheduled_access_code" --temporary-starts-at "$scheduled_starts_at" --temporary-ends-at "$scheduled_ends_at")"
